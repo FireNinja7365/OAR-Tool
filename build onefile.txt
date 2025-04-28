@@ -1,0 +1,3 @@
+you need to use the correct paths to your downloaded files, by replacing the corresponding "PATH TO\example" with real directories
+
+PATH TO\pyinstaller.exe --add-data "PATH TO\Script Files;Script Files" --icon "PATH TO\Script Files\custom_icon.ico" --onefile "PATH TO\OAR tool.py"
