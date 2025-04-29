@@ -9,10 +9,6 @@ import winreg
 class OARTool:
     def __init__(self):
         self.steam_path = self.get_steam_path()
-        if not self.steam_path:
-            messagebox.showerror("Error", "Steam installation not found!")
-            return
-
         self.account_data = {}
         self.GAME_ID = "2551020"
         self.duplicate_files = {}
@@ -22,7 +18,6 @@ class OARTool:
         self.is_advanced_mode = False
         self.manually_selected_account_id = ""
 
-    def setup_window(self):
         self.window = tk.Tk()
         self.window.resizable(False, False)
 
@@ -37,7 +32,14 @@ class OARTool:
 
         self.create_menu_bar()
 
-        self.show_selection_screen()
+        if not self.steam_path:
+            messagebox.showinfo("Steam Not Found", "Steam could not be automatically detected, use advanced mode to continue")
+            self.set_mode(True)
+        else:
+            self.show_selection_screen()
+
+    def setup_window(self):
+        pass
 
     def create_menu_bar(self):
         menubar = tk.Menu(self.window)
@@ -59,10 +61,14 @@ class OARTool:
         if advanced:
             self.show_advanced_screen()
         else:
-            self.show_selection_screen()
+            if self.steam_path:
+                self.show_selection_screen()
+            else:
+                messagebox.showerror("Error", "Steam installation not found! You must use Advanced Mode.")
+                self.show_advanced_screen()
 
     def show_about(self):
-        messagebox.showinfo("About OAR Tool", "OAR Tool v2.8\n\nMade By FireNinja\n\nhttps://github.com/FireNinja7365/OAR-Tool")
+        messagebox.showinfo("About OAR Tool", "OAR Tool v2.9\n\nMade By FireNinja\n\nhttps://github.com/FireNinja7365/OAR-Tool")
 
     def clear_window(self):
         if self.main_frame:
@@ -234,6 +240,10 @@ class OARTool:
                 return None
 
     def load_accounts(self, buttons_frame):
+        if not self.steam_path:
+            ttk.Label(buttons_frame, text="Steam installation not found!", foreground="red").pack()
+            return
+
         login_file = os.path.join(self.steam_path, 'config', 'loginusers.vdf')
 
         try:
@@ -380,7 +390,6 @@ class OARTool:
             messagebox.showinfo("Nothing Changed", "No changes were made!\nMaybe try selecting something?")
 
     def run(self):
-        self.setup_window()
         self.window.mainloop()
 
 if __name__ == "__main__":
