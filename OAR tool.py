@@ -1,6 +1,6 @@
 import hashlib
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import os
 import shutil
 import vdf
@@ -12,17 +12,20 @@ class OARTool:
         if not self.steam_path:
             messagebox.showerror("Error", "Steam installation not found!")
             return
-            
+
         self.account_data = {}
         self.GAME_ID = "2551020"
         self.duplicate_files = {}
         self.window = None
         self.main_frame = None
+        self.remote_directory = None
+        self.is_advanced_mode = False
+        self.manually_selected_account_id = ""
 
     def setup_window(self):
         self.window = tk.Tk()
         self.window.resizable(False, False)
-        
+
         try:
             icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Script Files", "custom_icon.ico")
             if os.path.exists(icon_path):
@@ -30,26 +33,55 @@ class OARTool:
         except Exception as e:
             print(f"Failed to load icon: {str(e)}")
 
-        self.window.title("OAR Tool v2.7")
+        self.window.title("OAR Tool")
+
+        self.create_menu_bar()
+
         self.show_selection_screen()
+
+    def create_menu_bar(self):
+        menubar = tk.Menu(self.window)
+        self.window.config(menu=menubar)
+
+        mode_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Mode", menu=mode_menu)
+
+        mode_menu.add_command(label="Normal Mode", command=lambda: self.set_mode(False))
+        mode_menu.add_command(label="Advanced Mode", command=lambda: self.set_mode(True))
+
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Help", menu=help_menu)
+
+        help_menu.add_command(label="About", command=self.show_about)
+
+    def set_mode(self, advanced):
+        self.is_advanced_mode = advanced
+        if advanced:
+            self.show_advanced_screen()
+        else:
+            self.show_selection_screen()
+
+    def show_about(self):
+        messagebox.showinfo("About OAR Tool", "OAR Tool v2.8\n\nMade By FireNinja\n\nhttps://github.com/FireNinja7365/OAR-Tool")
 
     def clear_window(self):
         if self.main_frame:
             self.main_frame.destroy()
+
         self.main_frame = ttk.Frame(self.window, padding="10")
         self.main_frame.pack(fill=tk.BOTH, expand=True)
 
     def show_selection_screen(self):
         self.clear_window()
         self.window.geometry("300x200")
-        
+
         ttk.Label(self.main_frame, text="Select your Steam account:", font=('Arial', 12, 'bold')).pack()
-        
+
         buttons_frame = ttk.Frame(self.main_frame)
         buttons_frame.pack(fill=tk.BOTH, expand=True)
-        
+
         self.load_accounts(buttons_frame)
-        
+
         base_height = 80
         per_button_height = 35
         num_accounts = len(self.account_data)
@@ -57,40 +89,119 @@ class OARTool:
         window_height = max(200, min(total_height, 800))
         self.window.geometry(f"300x{window_height}")
 
+    def show_advanced_screen(self):
+        self.clear_window()
+        self.window.geometry("500x350")
+
+        ttk.Label(self.main_frame, text="Advanced Mode", font=('Arial', 14, 'bold')).pack(pady=10)
+
+        id_frame = ttk.Frame(self.main_frame)
+        id_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(id_frame, text="Steam64 ID:").pack(side=tk.LEFT, padx=5)
+        self.steam_id_var = tk.StringVar()
+        steam_id_entry = ttk.Entry(id_frame, textvariable=self.steam_id_var, width=30)
+        steam_id_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+        dir_frame = ttk.Frame(self.main_frame)
+        dir_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(dir_frame, text="Save Directory:").pack(side=tk.LEFT, padx=5)
+        self.save_dir_var = tk.StringVar()
+        save_dir_entry = ttk.Entry(dir_frame, textvariable=self.save_dir_var, width=30)
+        save_dir_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+        browse_button = ttk.Button(
+            dir_frame,
+            text="Browse...",
+            command=self.browse_save_directory
+        )
+        browse_button.pack(side=tk.RIGHT, padx=5)
+
+        ttk.Label(self.main_frame, text="In advanced mode, you can manually specify your Steam64 ID\nand the location of your save files.",
+                  justify=tk.CENTER).pack(pady=10)
+
+        warning_frame = ttk.Frame(self.main_frame)
+        warning_frame.pack(fill=tk.X, pady=10)
+        warning_label = ttk.Label(
+            warning_frame,
+            text="Warning: Only use if you know what you're doing!",
+            foreground="red",
+            font=('Arial', 10, 'bold')
+        )
+        warning_label.pack()
+
+        continue_button = ttk.Button(
+            self.main_frame,
+            text="Continue to Edit",
+            command=self.process_advanced_selection
+        )
+        continue_button.pack(fill=tk.X, expand=True, padx=5, pady=10)
+
+    def browse_save_directory(self):
+        directory = filedialog.askdirectory(
+            title="Select Directory Containing Save Files",
+            initialdir=self.steam_path if self.steam_path else "/"
+        )
+        if directory:
+            self.save_dir_var.set(directory)
+
+    def process_advanced_selection(self):
+        steam64_id = self.steam_id_var.get().strip()
+        save_dir = self.save_dir_var.get().strip()
+
+        if not steam64_id:
+            messagebox.showerror("Error", "Steam64 ID cannot be empty")
+            return
+
+        if not save_dir or not os.path.isdir(save_dir):
+            messagebox.showerror("Error", "Invalid save directory")
+            return
+
+        self.remote_directory = save_dir
+        self.manually_selected_account_id = steam64_id
+
+        self.find_duplicate_names(self.remote_directory, steam64_id)
+
+        run_from_directory = os.path.dirname(os.path.abspath(__file__))
+        script_files_directory = os.path.join(run_from_directory, "Script Files")
+
+        self.show_edit_screen(steam64_id, script_files_directory)
+
     def show_edit_screen(self, steam64_id, script_files_directory):
         self.clear_window()
         self.window.geometry("300x225")
-        
+
         cash = tk.IntVar()
         level = tk.IntVar()
         edit_cash = tk.BooleanVar()
         edit_level = tk.BooleanVar()
         edit_items = tk.BooleanVar()
         edit_maps = tk.BooleanVar()
-        
+
         ttk.Label(self.main_frame, text="Made By FireNinja").pack()
-        
+
         ttk.Checkbutton(self.main_frame, text="Unlock Items & Cosmetics", variable=edit_items).pack(anchor="w")
         ttk.Checkbutton(self.main_frame, text="Unlock Maps", variable=edit_maps).pack(anchor="w")
-        
+
         ttk.Checkbutton(self.main_frame, text="Edit Cash:", variable=edit_cash).pack(anchor="w")
         ttk.Entry(self.main_frame, textvariable=cash).pack(fill="x")
-        
+
         ttk.Checkbutton(self.main_frame, text="Edit Level:", variable=edit_level).pack(anchor="w")
         ttk.Entry(self.main_frame, textvariable=level).pack(fill="x")
-        
+
         ttk.Label(self.main_frame, text="").pack()
-        
+
         buttons_frame = ttk.Frame(self.main_frame)
         buttons_frame.pack(fill="x", expand=True)
-        
+
         back_button = ttk.Button(
             buttons_frame,
             text="Back",
-            command=self.show_selection_screen
+            command=self.go_back
         )
         back_button.pack(side="left", fill="x", expand=True, padx=2)
-        
+
         apply_button = ttk.Button(
             buttons_frame,
             text="Apply",
@@ -100,6 +211,12 @@ class OARTool:
             )
         )
         apply_button.pack(side="left", fill="x", expand=True, padx=2)
+
+    def go_back(self):
+        if self.is_advanced_mode:
+            self.show_advanced_screen()
+        else:
+            self.show_selection_screen()
 
     def get_steam_path(self):
         try:
@@ -118,11 +235,11 @@ class OARTool:
 
     def load_accounts(self, buttons_frame):
         login_file = os.path.join(self.steam_path, 'config', 'loginusers.vdf')
-        
+
         try:
             with open(login_file, 'r', encoding='utf-8') as f:
                 users_data = vdf.load(f)
-                
+
             if 'users' in users_data:
                 for steam_id64, user_data in users_data['users'].items():
                     account_name = user_data.get('PersonaName', 'Unknown')
@@ -133,17 +250,17 @@ class OARTool:
                         'steam64_id': steam_id64,
                         'userdata_path': userdata_path
                     }
-                    
+
                     btn = ttk.Button(
                         buttons_frame,
                         text=f"{account_name}",
                         command=lambda name=account_name: self.select_account(name)
                     )
                     btn.pack(fill=tk.X, pady=5)
-                        
+
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load Steam accounts: {str(e)}")
-    
+
     def select_account(self, account_name):
         account_info = self.account_data.get(account_name)
         if not account_info:
@@ -168,29 +285,29 @@ class OARTool:
         backup_source = os.path.join(self.steam_path, 'userdata', str(steam3_id), self.GAME_ID)
         if os.path.exists(backup_source) and not os.path.exists(user_backup_folder):
             shutil.copytree(backup_source, user_backup_folder)
-        
+
         self.find_duplicate_names(self.remote_directory, steam64_id)
         self.show_edit_screen(steam64_id, script_files_directory)
 
     def ensure_directories_exist(self, steam3_id):
         base_path = os.path.join(self.steam_path, 'userdata', str(steam3_id), self.GAME_ID)
         remote_path = os.path.join(base_path, 'remote')
-        
+
         os.makedirs(remote_path, exist_ok=True)
-        
+
         return remote_path
 
     def adjust_window_size(self):
         base_height = 80
         per_button_height = 35
         num_accounts = len(self.account_data)
-        
+
         total_height = base_height + (per_button_height * num_accounts)
-        
+
         min_height = 200
         max_height = 800
         window_height = max(min_height, min(total_height, max_height))
-        
+
         self.window.geometry(f"400x{window_height}")
 
     def find_duplicate_names(self, directory, steam64_id):
@@ -220,7 +337,7 @@ class OARTool:
     def advanced_edit(self, script_files_directory, file_ext, steam64_id, old_key_binary, new_key_binary, duplicate_file):
         scr_path = os.path.join(script_files_directory, file_ext)
         dst_path = os.path.join(self.remote_directory, f"{steam64_id}{file_ext}")
-        
+
         with open(scr_path, "rb") as file:
             contents = file.read()
 
@@ -241,7 +358,7 @@ class OARTool:
     def apply_changes(self, edit_cash, edit_level, edit_items, edit_maps, cash, level, steam64_id, script_files_directory):
         if edit_cash.get():
             cash_duplicate = self.duplicate_files.get("CashSave")
-            self.advanced_edit(script_files_directory, "Cash.sav", steam64_id, b"my_stupid_cash_id", 
+            self.advanced_edit(script_files_directory, "Cash.sav", steam64_id, b"my_stupid_cash_id",
                              cash.get().to_bytes(4, byteorder="little", signed=True), cash_duplicate)
 
         if edit_level.get():
