@@ -1,10 +1,58 @@
 import hashlib
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, scrolledtext
 import os
 import shutil
 import vdf
 import winreg
+import sys
+import io
+
+class DebugConsole(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Debug Console")
+        self.geometry("600x400")
+
+        try:
+            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Script Files", "custom_icon.ico")
+            if os.path.exists(icon_path):
+                self.iconbitmap(icon_path)
+        except Exception as e:
+            print(f"Failed to load icon for debug console: {str(e)}")
+
+        self.console_output = scrolledtext.ScrolledText(self, wrap=tk.WORD, width=80, height=20)
+        self.console_output.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
+
+        self.console_output.config(state=tk.DISABLED)
+
+        button_frame = ttk.Frame(self)
+        button_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        clear_button = ttk.Button(button_frame, text="Clear Console", command=self.clear_console)
+        clear_button.pack(side=tk.RIGHT, padx=5)
+
+        self.old_stdout = sys.stdout
+        sys.stdout = self
+
+    def write(self, text):
+        self.console_output.config(state=tk.NORMAL)
+        self.console_output.insert(tk.END, text)
+        self.console_output.see(tk.END)
+        self.console_output.config(state=tk.DISABLED)
+        self.old_stdout.write(text)
+
+    def flush(self):
+        pass
+
+    def clear_console(self):
+        self.console_output.config(state=tk.NORMAL)
+        self.console_output.delete(1.0, tk.END)
+        self.console_output.config(state=tk.DISABLED)
+
+    def on_close(self):
+        sys.stdout = self.old_stdout
+        self.destroy()
 
 class OARTool:
     def __init__(self):
@@ -17,6 +65,7 @@ class OARTool:
         self.remote_directory = None
         self.is_advanced_mode = False
         self.manually_selected_account_id = ""
+        self.debug_console = None
 
         self.window = tk.Tk()
         self.window.resizable(False, False)
@@ -55,6 +104,18 @@ class OARTool:
         menubar.add_cascade(label="Help", menu=help_menu)
 
         help_menu.add_command(label="About", command=self.show_about)
+        help_menu.add_command(label="Debug Console", command=self.show_debug_console)
+
+    def show_debug_console(self):
+        if self.debug_console is None or not self.debug_console.winfo_exists():
+            self.debug_console = DebugConsole(self.window)
+            self.debug_console.protocol("WM_DELETE_WINDOW", self.debug_console.on_close)
+        else:
+            self.debug_console.lift()
+
+        print("Debug console opened")
+        print(f"Steam path: {self.steam_path}")
+        print(f"Advanced mode: {self.is_advanced_mode}")
 
     def set_mode(self, advanced):
         self.is_advanced_mode = advanced
@@ -68,7 +129,7 @@ class OARTool:
                 self.show_advanced_screen()
 
     def show_about(self):
-        messagebox.showinfo("About OAR Tool", "OAR Tool v2.9\n\nMade By FireNinja\n\nhttps://github.com/FireNinja7365/OAR-Tool")
+        messagebox.showinfo("About OAR Tool", "OAR Tool v3.0\n\nMade By FireNinja\n\nhttps://github.com/FireNinja7365/OAR-Tool")
 
     def clear_window(self):
         if self.main_frame:
@@ -366,27 +427,37 @@ class OARTool:
                 file.write(contents)
 
     def apply_changes(self, edit_cash, edit_level, edit_items, edit_maps, cash, level, steam64_id, script_files_directory):
+        print(f"Applying changes for Steam64 ID: {steam64_id}")
+
         if edit_cash.get():
+            cash_value = cash.get()
+            print(f"Editing cash to: {cash_value}")
             cash_duplicate = self.duplicate_files.get("CashSave")
             self.advanced_edit(script_files_directory, "Cash.sav", steam64_id, b"my_stupid_cash_id",
-                             cash.get().to_bytes(4, byteorder="little", signed=True), cash_duplicate)
+                             cash_value.to_bytes(4, byteorder="little", signed=True), cash_duplicate)
 
         if edit_level.get():
+            level_value = level.get()
+            print(f"Editing level to: {level_value}")
             level_duplicate = self.duplicate_files.get("LevelSave")
             self.advanced_edit(script_files_directory, "Level.sav", steam64_id, b"my_stupid_level_id",
-                             level.get().to_bytes(4, byteorder="little", signed=True), level_duplicate)
+                             level_value.to_bytes(4, byteorder="little", signed=True), level_duplicate)
 
         if edit_items.get():
+            print("Unlocking items & cosmetics")
             item_duplicate = self.duplicate_files.get("InventoryItemsSave")
             self.advanced_edit(script_files_directory, "InventoryItems.sav", steam64_id, None, None, item_duplicate)
 
         if edit_maps.get():
+            print("Unlocking maps")
             maps_duplicate = self.duplicate_files.get("MapsSave")
             self.advanced_edit(script_files_directory, "Maps.sav", steam64_id, None, None, maps_duplicate)
 
         if edit_cash.get() or edit_level.get() or edit_items.get() or edit_maps.get():
+            print("Changes applied successfully!")
             messagebox.showinfo("Success", "Changes applied successfully!")
         else:
+            print("No changes were made")
             messagebox.showinfo("Nothing Changed", "No changes were made!\nMaybe try selecting something?")
 
     def run(self):
