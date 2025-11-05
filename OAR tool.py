@@ -7,7 +7,7 @@ import vdf
 import winreg
 import sys
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 import logging
 from dataclasses import dataclass
 
@@ -15,22 +15,22 @@ from dataclasses import dataclass
 @dataclass
 class AccountInfo:
     steam3_id: str
-    steam64_id: str
+    steam64_id: Optional[str]
     userdata_path: str
     persona_name: str
 
 
 class DebugConsole(tk.Toplevel):
 
-    def __init__(self, parent):
+    def __init__(self, parent, log_history: List[str]):
         super().__init__(parent)
         self.title("Debug Console")
-        self.geometry("600x400")
-        self.old_stdout = sys.stdout
+        self.geometry("1100x620")
 
         self._setup_icon()
         self._setup_ui()
-        self._redirect_stdout()
+        self._populate_history(log_history)
+        self._attach_as_handler()
 
     def _setup_icon(self):
         try:
@@ -38,7 +38,7 @@ class DebugConsole(tk.Toplevel):
             if icon_path.exists():
                 self.iconbitmap(str(icon_path))
         except Exception as e:
-            logging.warning(f"Failed to load icon for debug console: {e}")
+            logging.warning(f"Failed to load icon for debug console: {e }")
 
     def _setup_ui(self):
         self.console_output = scrolledtext.ScrolledText(
@@ -46,54 +46,42 @@ class DebugConsole(tk.Toplevel):
         )
         self.console_output.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
 
-        button_frame = ttk.Frame(self)
-        button_frame.pack(fill=tk.X, padx=10, pady=5)
+    def _populate_history(self, log_history: List[str]):
+        self.console_output.config(state=tk.NORMAL)
+        if log_history:
+            self.console_output.insert(tk.END, "\n".join(log_history) + "\n")
+        self.console_output.see(tk.END)
+        self.console_output.config(state=tk.DISABLED)
 
-        ttk.Button(
-            button_frame, text="Clear Console", command=self.clear_console
-        ).pack(side=tk.RIGHT, padx=5)
+    def _attach_as_handler(self):
 
-    def _redirect_stdout(self):
-        sys.stdout = self
-
-        console_handler = logging.StreamHandler(self)
-        console_handler.setLevel(logging.INFO)
-        console_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
-
-        logging.getLogger().addHandler(console_handler)
-        self.console_handler = console_handler
+        self.console_handler = logging.StreamHandler(self)
+        self.console_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        )
+        logging.getLogger().addHandler(self.console_handler)
 
     def write(self, text):
+
         self.console_output.config(state=tk.NORMAL)
         self.console_output.insert(tk.END, text)
         self.console_output.see(tk.END)
         self.console_output.config(state=tk.DISABLED)
-        self.old_stdout.write(text)
 
     def flush(self):
+
         pass
 
-    def clear_console(self):
-        self.console_output.config(state=tk.NORMAL)
-        self.console_output.delete(1.0, tk.END)
-        self.console_output.config(state=tk.DISABLED)
-
     def on_close(self):
-        sys.stdout = self.old_stdout
-
-        if hasattr(self, 'console_handler'):
+        if hasattr(self, "console_handler"):
             logging.getLogger().removeHandler(self.console_handler)
-
         self.destroy()
 
 
 class SteamManager:
 
     GAME_ID = "2551020"
-    REGISTRY_PATHS = [
-        "SOFTWARE\\WOW6432Node\\Valve\\Steam",
-        "SOFTWARE\\Valve\\Steam"
-    ]
+    REGISTRY_PATHS = ["SOFTWARE\\WOW6432Node\\Valve\\Steam", "SOFTWARE\\Valve\\Steam"]
 
     def __init__(self):
         self.steam_path = self._find_steam_path()
@@ -109,43 +97,70 @@ class SteamManager:
         return None
 
     def load_accounts(self) -> Dict[str, AccountInfo]:
-
         if not self.steam_path:
             raise FileNotFoundError("Steam installation not found")
 
-        login_file = Path(self.steam_path) / "config" / "loginusers.vdf"
-
-        if not login_file.exists():
-            raise FileNotFoundError(f"Login users file not found: {login_file}")
-
-        try:
-            with open(login_file, "r", encoding="utf-8") as f:
-                users_data = vdf.load(f)
-        except Exception as e:
-            raise ValueError(f"Failed to parse loginusers.vdf: {e}")
-
         accounts = {}
-        if "users" in users_data:
-            for steam_id64, user_data in users_data["users"].items():
-                account_name = user_data.get("PersonaName", "Unknown")
-                steam3_id = str(int(steam_id64) & 0xFFFFFFFF)
-                userdata_path = Path(self.steam_path) / "userdata" / steam3_id / self.GAME_ID / "remote"
+        known_steam3_ids = set()
 
-                accounts[account_name] = AccountInfo(
-                    steam3_id=steam3_id,
-                    steam64_id=steam_id64,
-                    userdata_path=str(userdata_path),
-                    persona_name=account_name
-                )
+        login_file = Path(self.steam_path) / "config" / "loginusers.vdf"
+        if login_file.exists():
+            try:
+                with open(login_file, "r", encoding="utf-8") as f:
+                    users_data = vdf.load(f)
+                if "users" in users_data:
+                    for steam_id64, user_data in users_data["users"].items():
+                        account_name = user_data.get("PersonaName", "Unknown")
+                        steam3_id = str(int(steam_id64) & 0xFFFFFFFF)
+                        userdata_path = (
+                            Path(self.steam_path)
+                            / "userdata"
+                            / steam3_id
+                            / self.GAME_ID
+                            / "remote"
+                        )
+
+                        accounts[account_name] = AccountInfo(
+                            steam3_id=steam3_id,
+                            steam64_id=steam_id64,
+                            userdata_path=str(userdata_path),
+                            persona_name=account_name,
+                        )
+                        known_steam3_ids.add(steam3_id)
+            except Exception as e:
+                logging.warning(f"Could not parse loginusers.vdf: {e }")
+
+        userdata_root = Path(self.steam_path) / "userdata"
+        if userdata_root.exists() and userdata_root.is_dir():
+            for item in userdata_root.iterdir():
+
+                if item.is_dir() and item.name.isdigit():
+                    steam3_id = item.name
+                    if steam3_id not in known_steam3_ids:
+                        account_name = f"Unknown Account {steam3_id }"
+                        userdata_path = item / self.GAME_ID / "remote"
+
+                        accounts[account_name] = AccountInfo(
+                            steam3_id=steam3_id,
+                            steam64_id=None,
+                            userdata_path=str(userdata_path),
+                            persona_name=account_name,
+                        )
+
+        if not accounts:
+            raise FileNotFoundError(
+                "No Steam accounts found in loginusers.vdf or userdata folder."
+            )
 
         return accounts
 
     def ensure_game_directories(self, steam3_id: str) -> str:
-
         if not self.steam_path:
             raise ValueError("Steam path not available")
 
-        remote_path = Path(self.steam_path) / "userdata" / steam3_id / self.GAME_ID / "remote"
+        remote_path = (
+            Path(self.steam_path) / "userdata" / steam3_id / self.GAME_ID / "remote"
+        )
         remote_path.mkdir(parents=True, exist_ok=True)
         return str(remote_path)
 
@@ -159,9 +174,9 @@ class SteamManager:
         if backup_source.exists() and not backup_folder.exists():
             try:
                 shutil.copytree(backup_source, backup_folder)
-                print(f"Backup created: {backup_folder}")
+                logging.info(f"Backup created: {backup_folder }")
             except Exception as e:
-                print(f"Failed to create backup: {e}")
+                logging.error(f"Failed to create backup: {e }")
 
 
 class SaveFileManager:
@@ -171,23 +186,31 @@ class SaveFileManager:
     def __init__(self, script_files_dir: Path):
         self.script_files_dir = script_files_dir
 
-    def generate_save_filenames(self, steam64_id: str, remote_dir: str) -> Dict[str, str]:
+    def generate_save_filenames(
+        self, steam64_id: str, remote_dir: str
+    ) -> Dict[str, str]:
 
         return {
-            f"{save_type}Save": os.path.join(
+            f"{save_type }Save": os.path.join(
                 remote_dir,
-                hashlib.md5(f"{steam64_id}{save_type}".encode()).hexdigest() + ".sav"
+                hashlib.md5(f"{steam64_id }{save_type }".encode()).hexdigest() + ".sav",
             )
             for save_type in self.SAVE_TYPES
         }
 
-    def apply_save_modification(self, file_type: str, steam64_id: str,
-                               remote_dir: str, duplicate_file: Optional[str] = None,
-                               old_key: Optional[bytes] = None, new_key: Optional[bytes] = None):
-        script_path = self.script_files_dir / f"{file_type}.sav"
+    def apply_save_modification(
+        self,
+        file_type: str,
+        steam64_id: str,
+        remote_dir: str,
+        duplicate_file: Optional[str] = None,
+        old_key: Optional[bytes] = None,
+        new_key: Optional[bytes] = None,
+    ):
+        script_path = self.script_files_dir / f"{file_type }.sav"
 
         if not script_path.exists():
-            raise FileNotFoundError(f"Script file not found: {script_path}")
+            raise FileNotFoundError(f"Script file not found: {script_path }")
 
         with open(script_path, "rb") as file:
             contents = file.read()
@@ -197,7 +220,7 @@ class SaveFileManager:
         if old_key is not None and new_key is not None:
             contents = contents.replace(old_key, new_key)
 
-        files_to_write = [Path(remote_dir) / f"{steam64_id}{file_type}.sav"]
+        files_to_write = [Path(remote_dir) / f"{steam64_id }{file_type }.sav"]
         if duplicate_file and Path(duplicate_file).parent.exists():
             files_to_write.append(Path(duplicate_file))
 
@@ -208,16 +231,20 @@ class SaveFileManager:
         try:
             with open(file_path, "wb") as file:
                 file.write(contents)
-            print(f"Save file written: {file_path}")
+            logging.info(f"Save file written: {file_path }")
         except Exception as e:
-            print(f"Failed to write save file {file_path}: {e}")
+            logging.error(f"Failed to write save file {file_path }: {e }")
             raise
 
 
 class OARTool:
 
     def __init__(self):
+        self.log_history: List[str] = []
+        self._setup_logging()
+
         self.steam_manager = SteamManager()
+        logging.info(f"Steam path: {self .steam_manager .steam_path }")
         self.script_files_dir = Path(__file__).parent / "Script Files"
         self.save_manager = SaveFileManager(self.script_files_dir)
 
@@ -227,14 +254,36 @@ class OARTool:
         self.is_advanced_mode = False
         self.debug_console: Optional[DebugConsole] = None
 
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         self._setup_window()
         self._initialize_app()
+
+    def _setup_logging(self):
+        class ListHandler(logging.Handler):
+            def __init__(self, log_list):
+                super().__init__()
+                self.log_list = log_list
+
+            def emit(self, record):
+                self.log_list.append(self.format(record))
+
+        log_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.INFO)
+
+        list_log_handler = ListHandler(self.log_history)
+        list_log_handler.setFormatter(log_formatter)
+        root_logger.addHandler(list_log_handler)
+
+        stream_handler = logging.StreamHandler(sys.stdout)
+        stream_handler.setFormatter(log_formatter)
+        root_logger.addHandler(stream_handler)
+
+        logging.info("OAR Tool logging initialized.")
 
     def _setup_window(self):
         self.window = tk.Tk()
         self.window.resizable(False, False)
-        self.window.title("OAR Tool v3.1")
+        self.window.title("OAR Tool v3.2")
         self.window.geometry("300x225")
         self.main_frame = None
 
@@ -247,7 +296,7 @@ class OARTool:
             if icon_path.exists():
                 self.window.iconbitmap(str(icon_path))
         except Exception as e:
-            logging.warning(f"Failed to load icon: {e}")
+            logging.warning(f"Failed to load icon: {e }")
 
     def _initialize_app(self):
         if not self.steam_manager.steam_path:
@@ -266,7 +315,9 @@ class OARTool:
         mode_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Mode", menu=mode_menu)
         mode_menu.add_command(label="Normal Mode", command=lambda: self.set_mode(False))
-        mode_menu.add_command(label="Advanced Mode", command=lambda: self.set_mode(True))
+        mode_menu.add_command(
+            label="Advanced Mode", command=lambda: self.set_mode(True)
+        )
 
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
@@ -275,19 +326,15 @@ class OARTool:
 
     def _show_debug_console(self):
         if self.debug_console is None or not self.debug_console.winfo_exists():
-            self.debug_console = DebugConsole(self.window)
+            self.debug_console = DebugConsole(self.window, self.log_history)
             self.debug_console.protocol("WM_DELETE_WINDOW", self.debug_console.on_close)
         else:
             self.debug_console.lift()
 
-        print("Debug console opened")
-        print(f"Steam path: {self.steam_manager.steam_path}")
-        print(f"Advanced mode: {self.is_advanced_mode}")
-
     def set_mode(self, advanced: bool):
         if self.is_advanced_mode != advanced:
             mode_name = "Advanced" if advanced else "Normal"
-            logging.info(f"Application mode changed to {mode_name}")
+            logging.info(f"Application mode changed to {mode_name }")
             self.is_advanced_mode = advanced
 
         if advanced:
@@ -303,7 +350,7 @@ class OARTool:
     def _show_about(self):
         messagebox.showinfo(
             "About OAR Tool",
-            "OAR Tool v3.1\n\nMade By FireNinja\n\nhttps://github.com/FireNinja7365/OAR-Tool",
+            "OAR Tool v3.2\n\nMade By FireNinja\n\nhttps://github.com/FireNinja7365/OAR-Tool",
         )
 
     def _clear_window(self):
@@ -314,6 +361,7 @@ class OARTool:
 
     def show_selection_screen(self):
         self._clear_window()
+        self.window.geometry("300x225")
 
         ttk.Label(
             self.main_frame,
@@ -328,7 +376,9 @@ class OARTool:
         container_frame.pack(fill="both", expand=True)
 
         canvas = tk.Canvas(container_frame, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(container_frame, orient="vertical", command=canvas.yview)
+        scrollbar = ttk.Scrollbar(
+            container_frame, orient="vertical", command=canvas.yview
+        )
         scrollable_frame = ttk.Frame(canvas)
 
         def configure_scroll_region(event=None):
@@ -346,14 +396,20 @@ class OARTool:
         scrollable_frame.bind("<Configure>", configure_scroll_region)
         canvas.bind("<Configure>", configure_scroll_region)
 
-        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="n")
+        canvas_window = canvas.create_window(
+            (0, 0), window=scrollable_frame, anchor="n"
+        )
         canvas.configure(yscrollcommand=scrollbar.set)
 
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
         def _on_mousewheel(event):
-            if canvas.canvasy(0) > 0 or canvas.canvasy(canvas.winfo_height()) < scrollable_frame.winfo_reqheight():
+            if (
+                canvas.canvasy(0) > 0
+                or canvas.canvasy(canvas.winfo_height())
+                < scrollable_frame.winfo_reqheight()
+            ):
                 canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
         def _bind_mousewheel(event):
@@ -370,13 +426,20 @@ class OARTool:
         self.window.update_idletasks()
         configure_scroll_region()
 
-    def show_advanced_screen(self):
+    def show_advanced_screen(self, prefill_save_dir: Optional[str] = None):
         self._clear_window()
         self.window.geometry("500x350")
 
         ttk.Label(
             self.main_frame, text="Advanced Mode", font=("Arial", 14, "bold")
         ).pack(pady=10)
+
+        if prefill_save_dir:
+            ttk.Label(
+                self.main_frame,
+                text="Account not in login file. Please enter the Steam64 ID.",
+                foreground="blue",
+            ).pack(pady=(0, 10))
 
         id_frame = ttk.Frame(self.main_frame)
         id_frame.pack(fill=tk.X, pady=5)
@@ -390,6 +453,8 @@ class OARTool:
         dir_frame.pack(fill=tk.X, pady=5)
         ttk.Label(dir_frame, text="Save Directory:").pack(side=tk.LEFT, padx=5)
         self.save_dir_var = tk.StringVar()
+        if prefill_save_dir:
+            self.save_dir_var.set(prefill_save_dir)
         ttk.Entry(dir_frame, textvariable=self.save_dir_var, width=30).pack(
             side=tk.LEFT, fill=tk.X, expand=True, padx=5
         )
@@ -428,8 +493,8 @@ class OARTool:
         steam64_id = self.steam_id_var.get().strip()
         save_dir = self.save_dir_var.get().strip()
 
-        if not steam64_id:
-            messagebox.showerror("Error", "Steam64 ID cannot be empty")
+        if not steam64_id or not steam64_id.isdigit():
+            messagebox.showerror("Error", "Steam64 ID must be a valid number.")
             return
 
         if not save_dir or not Path(save_dir).is_dir():
@@ -437,7 +502,9 @@ class OARTool:
             return
 
         self.remote_directory = save_dir
-        self.duplicate_files = self.save_manager.generate_save_filenames(steam64_id, save_dir)
+        self.duplicate_files = self.save_manager.generate_save_filenames(
+            steam64_id, save_dir
+        )
 
         self.show_edit_screen(steam64_id)
 
@@ -446,37 +513,35 @@ class OARTool:
         self.window.geometry("300x225")
 
         form_vars = {
-            'cash': tk.IntVar(),
-            'level': tk.IntVar(),
-            'edit_cash': tk.BooleanVar(),
-            'edit_level': tk.BooleanVar(),
-            'edit_items': tk.BooleanVar(),
-            'edit_maps': tk.BooleanVar(),
+            "cash": tk.IntVar(),
+            "level": tk.IntVar(),
+            "edit_cash": tk.BooleanVar(),
+            "edit_level": tk.BooleanVar(),
+            "edit_items": tk.BooleanVar(),
+            "edit_maps": tk.BooleanVar(),
         }
 
         ttk.Label(self.main_frame, text="Made By FireNinja").pack()
 
         ttk.Checkbutton(
-            self.main_frame, text="Unlock Items & Cosmetics",
-            variable=form_vars['edit_items']
+            self.main_frame,
+            text="Unlock Items & Cosmetics",
+            variable=form_vars["edit_items"],
         ).pack(anchor="w")
 
         ttk.Checkbutton(
-            self.main_frame, text="Unlock Maps",
-            variable=form_vars['edit_maps']
+            self.main_frame, text="Unlock Maps", variable=form_vars["edit_maps"]
         ).pack(anchor="w")
 
         ttk.Checkbutton(
-            self.main_frame, text="Edit Cash:",
-            variable=form_vars['edit_cash']
+            self.main_frame, text="Edit Cash:", variable=form_vars["edit_cash"]
         ).pack(anchor="w")
-        ttk.Entry(self.main_frame, textvariable=form_vars['cash']).pack(fill="x")
+        ttk.Entry(self.main_frame, textvariable=form_vars["cash"]).pack(fill="x")
 
         ttk.Checkbutton(
-            self.main_frame, text="Edit Level:",
-            variable=form_vars['edit_level']
+            self.main_frame, text="Edit Level:", variable=form_vars["edit_level"]
         ).pack(anchor="w")
-        ttk.Entry(self.main_frame, textvariable=form_vars['level']).pack(fill="x")
+        ttk.Entry(self.main_frame, textvariable=form_vars["level"]).pack(fill="x")
 
         ttk.Label(self.main_frame, text="").pack()
 
@@ -494,10 +559,8 @@ class OARTool:
         ).pack(side="left", fill="x", expand=True, padx=2)
 
     def _go_back(self):
-        if self.is_advanced_mode:
-            self.show_advanced_screen()
-        else:
-            self.show_selection_screen()
+
+        self.show_selection_screen()
 
     def _load_accounts(self, parent_frame):
         if not self.steam_manager.steam_path:
@@ -509,17 +572,17 @@ class OARTool:
         try:
             self.account_data = self.steam_manager.load_accounts()
 
-            for account_name in self.account_data:
+            for account_name in sorted(self.account_data.keys()):
                 ttk.Button(
                     parent_frame,
                     text=account_name,
                     command=lambda name=account_name: self._select_account(name),
-                    width=25
+                    width=40,
                 ).pack(pady=5)
 
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to load Steam accounts: {e}")
-            print(f"Failed to load accounts: {e}")
+            messagebox.showerror("Error", f"Failed to load Steam accounts: {e }")
+            logging.error(f"Failed to load accounts: {e }")
 
     def _select_account(self, account_name: str):
         account_info = self.account_data.get(account_name)
@@ -528,11 +591,22 @@ class OARTool:
             return
 
         try:
-            self.remote_directory = self.steam_manager.ensure_game_directories(account_info.steam3_id)
 
-            print(f"Account selected: {account_name}")
-            print(f"Account folder: {account_info.steam3_id}")
-            print(f"Account ID: {account_info.steam64_id}")
+            if account_info.steam64_id is None:
+                logging.warning(f"Unknown account selected: {account_name }")
+                logging.info("Redirecting to Advanced Mode with pre-filled path.")
+                self.steam_manager.ensure_game_directories(account_info.steam3_id)
+                self.set_mode(True)
+                self.show_advanced_screen(prefill_save_dir=account_info.userdata_path)
+                return
+
+            self.remote_directory = self.steam_manager.ensure_game_directories(
+                account_info.steam3_id
+            )
+
+            logging.info(f"Account selected: {account_name }")
+            logging.info(f"Account folder: {account_info .steam3_id }")
+            logging.info(f"Account ID: {account_info .steam64_id }")
 
             backup_root = Path(__file__).parent / "OAR backup"
             backup_root.mkdir(exist_ok=True)
@@ -545,11 +619,10 @@ class OARTool:
             self.show_edit_screen(account_info.steam64_id)
 
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to select account: {e}")
-            print(f"Account selection failed: {e}")
+            messagebox.showerror("Error", f"Failed to select account: {e }")
+            logging.error(f"Account selection failed: {e }")
 
     def _validate_number_input(self, value: int) -> bool:
-
         if not (-2147483648 <= value <= 2147483647):
             messagebox.showinfo(
                 "Information",
@@ -563,15 +636,15 @@ class OARTool:
             messagebox.showerror("Error", "No save directory available")
             return
 
-        print(f"Applying changes for Steam64 ID: {steam64_id}")
+        logging.info(f"Applying changes for Steam64 ID: {steam64_id }")
         changes_made = False
 
         try:
             modifications = [
-                ('edit_cash', 'cash', 'Cash', b"my_stupid_cash_id"),
-                ('edit_level', 'level', 'Level', b"my_stupid_level_id"),
-                ('edit_items', None, 'InventoryItems', None),
-                ('edit_maps', None, 'Maps', None),
+                ("edit_cash", "cash", "Cash", b"my_stupid_cash_id"),
+                ("edit_level", "level", "Level", b"my_stupid_level_id"),
+                ("edit_items", None, "InventoryItems", None),
+                ("edit_maps", None, "Maps", None),
             ]
 
             for edit_var, value_var, file_type, old_key in modifications:
@@ -583,30 +656,33 @@ class OARTool:
                         if not self._validate_number_input(value):
                             return
                         new_key = value.to_bytes(4, byteorder="little", signed=True)
-                        print(f"Editing {file_type.lower()} to: {value}")
+                        logging.info(f"Editing {file_type .lower ()} to: {value }")
                     else:
-                        print(f"Unlocking {file_type.lower()}")
+                        logging.info(f"Unlocking {file_type .lower ()}")
 
                     self.save_manager.apply_save_modification(
-                        file_type, steam64_id, self.remote_directory,
-                        self.duplicate_files.get(f"{file_type}Save"),
-                        old_key, new_key
+                        file_type,
+                        steam64_id,
+                        self.remote_directory,
+                        self.duplicate_files.get(f"{file_type }Save"),
+                        old_key,
+                        new_key,
                     )
                     changes_made = True
 
             if changes_made:
-                print("Changes applied successfully!")
+                logging.info("Changes applied successfully!")
                 messagebox.showinfo("Success", "Changes applied successfully!")
             else:
-                print("No changes were made")
+                logging.info("No changes were made")
                 messagebox.showinfo(
                     "Nothing Changed",
                     "No changes were made!\nMaybe try selecting something?",
                 )
 
         except Exception as e:
-            error_msg = f"Failed to apply changes: {e}"
-            print(error_msg)
+            error_msg = f"Failed to apply changes: {e }"
+            logging.error(error_msg)
             messagebox.showerror("Error", error_msg)
 
     def run(self):
@@ -618,8 +694,9 @@ def main():
         app = OARTool()
         app.run()
     except Exception as e:
-        print(f"Application failed to start: {e}")
-        messagebox.showerror("Fatal Error", f"Application failed to start: {e}")
+
+        logging.critical(f"Application failed to start: {e }", exc_info=True)
+        messagebox.showerror("Fatal Error", f"Application failed to start: {e }")
 
 
 if __name__ == "__main__":
