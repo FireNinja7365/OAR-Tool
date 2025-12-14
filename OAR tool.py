@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, Optional, List
 import logging
 from dataclasses import dataclass
+import ctypes
 
 
 @dataclass
@@ -22,10 +23,13 @@ class AccountInfo:
 
 class DebugConsole(tk.Toplevel):
 
-    def __init__(self, parent, log_history: List[str]):
+    def __init__(self, parent, log_history: List[str], scale_factor: float = 1.0):
         super().__init__(parent)
         self.title("Debug Console")
-        self.geometry("1100x620")
+
+        width = int(1100 * scale_factor)
+        height = int(620 * scale_factor)
+        self.geometry(f"{width }x{height }")
 
         self._setup_icon()
         self._setup_ui()
@@ -240,6 +244,7 @@ class SaveFileManager:
 class OARTool:
 
     def __init__(self):
+        self._set_dpi_awareness()
         self.log_history: List[str] = []
         self._setup_logging()
 
@@ -254,8 +259,22 @@ class OARTool:
         self.is_advanced_mode = False
         self.debug_console: Optional[DebugConsole] = None
 
+        self.scale_factor = 1.0
+
         self._setup_window()
         self._initialize_app()
+
+    def _set_dpi_awareness(self):
+
+        try:
+
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            try:
+
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
 
     def _setup_logging(self):
         class ListHandler(logging.Handler):
@@ -282,13 +301,28 @@ class OARTool:
 
     def _setup_window(self):
         self.window = tk.Tk()
+
+        try:
+            self.scale_factor = self.window.winfo_fpixels("1i") / 96.0
+            logging.info(f"Detected Windows Scale Factor: {self .scale_factor }")
+        except Exception:
+            self.scale_factor = 1.0
+
         self.window.resizable(False, False)
         self.window.title("OAR Tool v3.2")
-        self.window.geometry("300x225")
+
+        self._set_scaled_geometry(300, 225)
+
         self.main_frame = None
 
         self._setup_icon()
         self._create_menu_bar()
+
+    def _set_scaled_geometry(self, width: int, height: int):
+
+        scaled_w = int(width * self.scale_factor)
+        scaled_h = int(height * self.scale_factor)
+        self.window.geometry(f"{scaled_w }x{scaled_h }")
 
     def _setup_icon(self):
         try:
@@ -326,7 +360,9 @@ class OARTool:
 
     def _show_debug_console(self):
         if self.debug_console is None or not self.debug_console.winfo_exists():
-            self.debug_console = DebugConsole(self.window, self.log_history)
+            self.debug_console = DebugConsole(
+                self.window, self.log_history, self.scale_factor
+            )
             self.debug_console.protocol("WM_DELETE_WINDOW", self.debug_console.on_close)
         else:
             self.debug_console.lift()
@@ -361,7 +397,7 @@ class OARTool:
 
     def show_selection_screen(self):
         self._clear_window()
-        self.window.geometry("300x225")
+        self._set_scaled_geometry(300, 225)
 
         ttk.Label(
             self.main_frame,
@@ -428,7 +464,7 @@ class OARTool:
 
     def show_advanced_screen(self, prefill_save_dir: Optional[str] = None):
         self._clear_window()
-        self.window.geometry("500x350")
+        self._set_scaled_geometry(500, 350)
 
         ttk.Label(
             self.main_frame, text="Advanced Mode", font=("Arial", 14, "bold")
@@ -510,7 +546,7 @@ class OARTool:
 
     def show_edit_screen(self, steam64_id: str):
         self._clear_window()
-        self.window.geometry("300x225")
+        self._set_scaled_geometry(300, 225)
 
         form_vars = {
             "cash": tk.IntVar(),
