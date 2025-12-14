@@ -309,7 +309,7 @@ class OARTool:
             self.scale_factor = 1.0
 
         self.window.resizable(False, False)
-        self.window.title("OAR Tool v3.2")
+        self.window.title("OAR Tool v3.3")
 
         self._set_scaled_geometry(300, 225)
 
@@ -386,7 +386,7 @@ class OARTool:
     def _show_about(self):
         messagebox.showinfo(
             "About OAR Tool",
-            "OAR Tool v3.2\n\nMade By FireNinja\n\nhttps://github.com/FireNinja7365/OAR-Tool",
+            "OAR Tool v3.3\n\nMade By FireNinja\n\nhttps://github.com/FireNinja7365/OAR-Tool",
         )
 
     def _clear_window(self):
