@@ -1,4 +1,5 @@
 import hashlib
+import struct
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, scrolledtext
 import os
@@ -7,7 +8,7 @@ import vdf
 import winreg
 import sys
 from pathlib import Path
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 import logging
 from dataclasses import dataclass
 import ctypes
@@ -241,6 +242,132 @@ class SaveFileManager:
             raise
 
 
+class MapPatcher:
+    """Handles patching Maps.sav to add new maps to the GVAS save file."""
+
+    def __init__(self, script_files_dir: Path):
+        self.script_files_dir = script_files_dir
+        self.maps_sav_path = script_files_dir / "Maps.sav"
+        self.backup_path = script_files_dir / "Maps.sav.backup"
+
+    def get_current_maps(self) -> List[str]:
+        """Returns list of map names currently in Maps.sav"""
+        try:
+            _, _, _, _, map_paths = self._read_maps_sav()
+            return [p.split("ShopItem_Map_")[1].split(".")[0] for p in map_paths]
+        except Exception as e:
+            logging.error(f"Failed to read current maps: {e}")
+            return []
+
+    def has_map(self, map_name: str) -> bool:
+        """Check if a map is already in Maps.sav"""
+        return map_name in self.get_current_maps()
+
+    def add_map(self, map_name: str) -> bool:
+        """
+        Add a new map to Maps.sav.
+        Returns True if successful, False otherwise.
+        """
+        try:
+            # Check if already exists
+            if self.has_map(map_name):
+                logging.info(f"Map '{map_name}' already exists in Maps.sav")
+                return True
+
+            # Create backup if not exists
+            if not self.backup_path.exists():
+                shutil.copy(self.maps_sav_path, self.backup_path)
+                logging.info(f"Backup created: {self.backup_path}")
+
+            # Read current structure
+            data, array_size_pos, count_pos, entries_start, existing_maps = self._read_maps_sav()
+            data = bytearray(data)
+
+            # Build the full path for the new map
+            new_path = f"/Game/Maps/Menu/BP/Shop/Maps/ShopItem_Map_{map_name}.ShopItem_Map_{map_name}_C"
+
+            logging.info(f"Adding map: {new_path}")
+
+            # Find insert position (after last entry)
+            pos = entries_start
+            for path in existing_maps:
+                str_len = len(path) + 1  # +1 for null terminator
+                pos += 4 + str_len
+
+            insert_pos = pos
+
+            # Create the new entry bytes
+            new_path_bytes = new_path.encode('ascii') + b'\x00'
+            new_entry = struct.pack('<I', len(new_path_bytes)) + new_path_bytes
+            new_entry_size = len(new_entry)
+
+            # Update array data size
+            old_array_size = struct.unpack('<I', data[array_size_pos:array_size_pos+4])[0]
+            new_array_size = old_array_size + new_entry_size
+            data[array_size_pos:array_size_pos+4] = struct.pack('<I', new_array_size)
+
+            # Update element count
+            old_count = struct.unpack('<I', data[count_pos:count_pos+4])[0]
+            new_count = old_count + 1
+            data[count_pos:count_pos+4] = struct.pack('<I', new_count)
+
+            # Insert the new entry
+            data = data[:insert_pos] + new_entry + data[insert_pos:]
+
+            # Write updated file
+            with open(self.maps_sav_path, 'wb') as f:
+                f.write(data)
+
+            logging.info(f"Map '{map_name}' added successfully (count: {old_count} -> {new_count})")
+            return True
+
+        except Exception as e:
+            logging.error(f"Failed to add map '{map_name}': {e}")
+            return False
+
+    def _read_maps_sav(self) -> Tuple[bytes, int, int, int, List[str]]:
+        """
+        Read Maps.sav and extract structure info.
+        Returns: (file_bytes, array_size_pos, count_pos, entries_start_pos, map_paths)
+        """
+        with open(self.maps_sav_path, 'rb') as f:
+            data = bytearray(f.read())
+
+        # Find "MapsSave" marker
+        maps_save_pos = data.find(b'MapsSave\x00')
+        if maps_save_pos == -1:
+            raise ValueError("Could not find MapsSave marker in Maps.sav")
+
+        # Structure after MapsSave:
+        # - 4 bytes: length of "ArrayProperty" string (14)
+        # - 14 bytes: "ArrayProperty\x00"
+        # - 4 bytes: array data size
+        # - 4 bytes: padding (zeros)
+        # - 4 bytes: length of inner type string (15)
+        # - 15 bytes: "ObjectProperty\x00"
+        # - 1 byte: null
+        # - 4 bytes: element count
+        # - entries...
+
+        array_prop_pos = maps_save_pos + 9  # After "MapsSave\x00"
+        array_size_pos = array_prop_pos + 4 + 14  # After length + "ArrayProperty\x00"
+        count_pos = array_size_pos + 4 + 4 + 4 + 15 + 1  # After size, padding, inner type
+        entries_start = count_pos + 4
+
+        count = struct.unpack('<I', data[count_pos:count_pos+4])[0]
+
+        # Read existing entries
+        pos = entries_start
+        map_paths = []
+        for _ in range(count):
+            str_len = struct.unpack('<I', data[pos:pos+4])[0]
+            path = data[pos+4:pos+4+str_len-1].decode('ascii')  # -1 to exclude null
+            map_paths.append(path)
+            pos += 4 + str_len
+
+        return bytes(data), array_size_pos, count_pos, entries_start, map_paths
+
+
 class OARTool:
 
     def __init__(self):
@@ -252,6 +379,7 @@ class OARTool:
         logging.info(f"Steam path: {self .steam_manager .steam_path }")
         self.script_files_dir = Path(__file__).parent / "Script Files"
         self.save_manager = SaveFileManager(self.script_files_dir)
+        self.map_patcher = MapPatcher(self.script_files_dir)
 
         self.account_data: Dict[str, AccountInfo] = {}
         self.duplicate_files: Dict[str, str] = {}
@@ -386,7 +514,11 @@ class OARTool:
     def _show_about(self):
         messagebox.showinfo(
             "About OAR Tool",
-            "OAR Tool v3.3\n\nMade By FireNinja\n\nhttps://github.com/FireNinja7365/OAR-Tool",
+            "OAR Tool v3.3\n\n"
+            "Made By FireNinja\n"
+            "https://github.com/FireNinja7365/OAR-Tool\n\n"
+            "Harbour Map Addition by BaselAshraf81\n"
+            "(uses GVAS patching)",
         )
 
     def _clear_window(self):
@@ -546,7 +678,7 @@ class OARTool:
 
     def show_edit_screen(self, steam64_id: str):
         self._clear_window()
-        self._set_scaled_geometry(300, 225)
+        self._set_scaled_geometry(300, 260)
 
         form_vars = {
             "cash": tk.IntVar(),
@@ -555,9 +687,10 @@ class OARTool:
             "edit_level": tk.BooleanVar(),
             "edit_items": tk.BooleanVar(),
             "edit_maps": tk.BooleanVar(),
+            "add_harbour": tk.BooleanVar(),
         }
 
-        ttk.Label(self.main_frame, text="Made By FireNinja").pack()
+        ttk.Label(self.main_frame, text="Original by FireNinja | Fork by BaselAshraf81").pack()
 
         ttk.Checkbutton(
             self.main_frame,
@@ -567,6 +700,16 @@ class OARTool:
 
         ttk.Checkbutton(
             self.main_frame, text="Unlock Maps", variable=form_vars["edit_maps"]
+        ).pack(anchor="w")
+
+        # Check if Harbour is already in Maps.sav
+        harbour_exists = self.map_patcher.has_map("Harbour")
+        harbour_text = "Add Harbour Map" if not harbour_exists else "Add Harbour Map (already added)"
+        ttk.Checkbutton(
+            self.main_frame, 
+            text=harbour_text, 
+            variable=form_vars["add_harbour"],
+            state="disabled" if harbour_exists else "normal"
         ).pack(anchor="w")
 
         ttk.Checkbutton(
@@ -676,6 +819,17 @@ class OARTool:
         changes_made = False
 
         try:
+            # Handle Harbour map addition first (patches Maps.sav before applying)
+            if form_vars["add_harbour"].get():
+                logging.info("Adding Harbour map to Maps.sav...")
+                if self.map_patcher.add_map("Harbour"):
+                    logging.info("Harbour map added to Maps.sav")
+                    # Auto-enable maps unlock since we're adding a new map
+                    form_vars["edit_maps"].set(True)
+                else:
+                    messagebox.showerror("Error", "Failed to add Harbour map to Maps.sav")
+                    return
+
             modifications = [
                 ("edit_cash", "cash", "Cash", b"my_stupid_cash_id"),
                 ("edit_level", "level", "Level", b"my_stupid_level_id"),
