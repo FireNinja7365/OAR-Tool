@@ -1,1 +1,21 @@
-OAR backup/*
+# Build output
+dist/
+build/
+*.spec
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Nuitka
+*.build/
+*.onefile-build/
+*.dist/
+
+# Backups
+OAR backup/
+
+# Misc
+*.log
+*.tmp
