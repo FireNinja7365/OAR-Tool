@@ -1,4 +1,4 @@
-# OAR-Tool (Fork)
+# One-armed-robber unlocker (Fork)
 
 > ⚠️ **Disclaimer:** This tool is provided for educational purposes only. Use at your own risk.
 
