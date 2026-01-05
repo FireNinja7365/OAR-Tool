@@ -1,5 +1,7 @@
 # OAR-Tool (Fork)
 
+> ⚠️ **Disclaimer:** This tool is provided for educational purposes only. Use at your own risk.
+
 ## A Save File Editor For One Armed Robber
 
 Forked to add support for new map additions without triggering altered save game error and without acquiring a .sav file that already has the map purchased.
