@@ -19,3 +19,4 @@ OAR backup/
 # Misc
 *.log
 *.tmp
+/FMODEL
