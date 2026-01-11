@@ -1,6 +1,7 @@
 import hashlib
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, scrolledtext
+import customtkinter as ctk
+from tkinter import messagebox, filedialog
 import os
 import shutil
 import vdf
@@ -10,7 +11,10 @@ from pathlib import Path
 from typing import Dict, Optional, List
 import logging
 from dataclasses import dataclass
-import ctypes
+
+
+ctk.set_appearance_mode("Dark")
+ctk.set_default_color_theme("blue")
 
 
 @dataclass
@@ -21,15 +25,62 @@ class AccountInfo:
     persona_name: str
 
 
-class DebugConsole(tk.Toplevel):
+class CTkMenu(ctk.CTkToplevel):
+    def __init__(self, parent, button, options: List[tuple]):
+        super().__init__(parent)
+        self.overrideredirect(True)
+        self.configure(fg_color="#2b2b2b")
 
-    def __init__(self, parent, log_history: List[str], scale_factor: float = 1.0):
+        x = button.winfo_rootx()
+        y = button.winfo_rooty() + button.winfo_height()
+
+        button_width = 140
+        button_height = 30
+        padding = 1
+
+        total_width = button_width + (padding * 2)
+        total_height = (button_height * len(options)) + (padding * 2 * len(options))
+
+        self.geometry(f"{total_width }x{total_height }+{x }+{y }")
+
+        inner_frame = ctk.CTkFrame(
+            self,
+            fg_color="#2b2b2b",
+            border_width=1,
+            border_color="#3b3b3b",
+            corner_radius=0,
+            width=total_width,
+            height=total_height,
+        )
+        inner_frame.pack(fill="both", expand=True)
+
+        for text, command in options:
+            btn = ctk.CTkButton(
+                inner_frame,
+                text=text,
+                command=lambda c=command: self._execute(c),
+                width=button_width,
+                height=button_height,
+                fg_color="transparent",
+                hover_color="#383838",
+                anchor="w",
+                corner_radius=0,
+            )
+            btn.pack(fill="x", padx=padding, pady=padding)
+
+        self.bind("<FocusOut>", lambda e: self.destroy())
+        self.after(10, self.focus_set)
+
+    def _execute(self, command):
+        self.destroy()
+        command()
+
+
+class DebugConsole(ctk.CTkToplevel):
+    def __init__(self, parent, log_history: List[str]):
         super().__init__(parent)
         self.title("Debug Console")
-
-        width = int(1100 * scale_factor)
-        height = int(620 * scale_factor)
-        self.geometry(f"{width }x{height }")
+        self.geometry("1100x620")
 
         self._setup_icon()
         self._setup_ui()
@@ -45,20 +96,17 @@ class DebugConsole(tk.Toplevel):
             logging.warning(f"Failed to load icon for debug console: {e }")
 
     def _setup_ui(self):
-        self.console_output = scrolledtext.ScrolledText(
-            self, wrap=tk.WORD, width=80, height=20, state=tk.DISABLED
-        )
+        self.console_output = ctk.CTkTextbox(self, activate_scrollbars=True)
         self.console_output.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
 
     def _populate_history(self, log_history: List[str]):
-        self.console_output.config(state=tk.NORMAL)
+        self.console_output.configure(state="normal")
         if log_history:
             self.console_output.insert(tk.END, "\n".join(log_history) + "\n")
         self.console_output.see(tk.END)
-        self.console_output.config(state=tk.DISABLED)
+        self.console_output.configure(state="disabled")
 
     def _attach_as_handler(self):
-
         self.console_handler = logging.StreamHandler(self)
         self.console_handler.setFormatter(
             logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -66,14 +114,13 @@ class DebugConsole(tk.Toplevel):
         logging.getLogger().addHandler(self.console_handler)
 
     def write(self, text):
-
-        self.console_output.config(state=tk.NORMAL)
-        self.console_output.insert(tk.END, text)
-        self.console_output.see(tk.END)
-        self.console_output.config(state=tk.DISABLED)
+        if self.winfo_exists():
+            self.console_output.configure(state="normal")
+            self.console_output.insert(tk.END, text)
+            self.console_output.see(tk.END)
+            self.console_output.configure(state="disabled")
 
     def flush(self):
-
         pass
 
     def on_close(self):
@@ -83,7 +130,6 @@ class DebugConsole(tk.Toplevel):
 
 
 class SteamManager:
-
     GAME_ID = "2551020"
     REGISTRY_PATHS = ["SOFTWARE\\WOW6432Node\\Valve\\Steam", "SOFTWARE\\Valve\\Steam"]
 
@@ -91,7 +137,6 @@ class SteamManager:
         self.steam_path = self._find_steam_path()
 
     def _find_steam_path(self) -> Optional[str]:
-
         for path in self.REGISTRY_PATHS:
             try:
                 with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as hkey:
@@ -137,7 +182,6 @@ class SteamManager:
         userdata_root = Path(self.steam_path) / "userdata"
         if userdata_root.exists() and userdata_root.is_dir():
             for item in userdata_root.iterdir():
-
                 if item.is_dir() and item.name.isdigit():
                     steam3_id = item.name
                     if steam3_id not in known_steam3_ids:
@@ -161,7 +205,6 @@ class SteamManager:
     def ensure_game_directories(self, steam3_id: str) -> str:
         if not self.steam_path:
             raise ValueError("Steam path not available")
-
         remote_path = (
             Path(self.steam_path) / "userdata" / steam3_id / self.GAME_ID / "remote"
         )
@@ -171,10 +214,8 @@ class SteamManager:
     def create_backup(self, steam3_id: str, backup_root: Path):
         if not self.steam_path:
             return
-
         backup_folder = backup_root / steam3_id
         backup_source = Path(self.steam_path) / "userdata" / steam3_id / self.GAME_ID
-
         if backup_source.exists() and not backup_folder.exists():
             try:
                 shutil.copytree(backup_source, backup_folder)
@@ -184,7 +225,6 @@ class SteamManager:
 
 
 class SaveFileManager:
-
     SAVE_TYPES = ["Cash", "Level", "InventoryItems", "Maps"]
 
     def __init__(self, script_files_dir: Path):
@@ -193,7 +233,6 @@ class SaveFileManager:
     def generate_save_filenames(
         self, steam64_id: str, remote_dir: str
     ) -> Dict[str, str]:
-
         return {
             f"{save_type }Save": os.path.join(
                 remote_dir,
@@ -212,7 +251,6 @@ class SaveFileManager:
         new_key: Optional[bytes] = None,
     ):
         script_path = self.script_files_dir / f"{file_type }.sav"
-
         if not script_path.exists():
             raise FileNotFoundError(f"Script file not found: {script_path }")
 
@@ -220,7 +258,6 @@ class SaveFileManager:
             contents = file.read()
 
         contents = contents.replace(b"my_stupid_user_id", steam64_id.encode())
-
         if old_key is not None and new_key is not None:
             contents = contents.replace(old_key, new_key)
 
@@ -242,9 +279,7 @@ class SaveFileManager:
 
 
 class OARTool:
-
     def __init__(self):
-        self._set_dpi_awareness()
         self.log_history: List[str] = []
         self._setup_logging()
 
@@ -259,22 +294,8 @@ class OARTool:
         self.is_advanced_mode = False
         self.debug_console: Optional[DebugConsole] = None
 
-        self.scale_factor = 1.0
-
         self._setup_window()
         self._initialize_app()
-
-    def _set_dpi_awareness(self):
-
-        try:
-
-            ctypes.windll.shcore.SetProcessDpiAwareness(1)
-        except Exception:
-            try:
-
-                ctypes.windll.user32.SetProcessDPIAware()
-            except Exception:
-                pass
 
     def _setup_logging(self):
         class ListHandler(logging.Handler):
@@ -300,29 +321,16 @@ class OARTool:
         logging.info("OAR Tool logging initialized.")
 
     def _setup_window(self):
-        self.window = tk.Tk()
-
-        try:
-            self.scale_factor = self.window.winfo_fpixels("1i") / 96.0
-            logging.info(f"Detected Windows Scale Factor: {self .scale_factor }")
-        except Exception:
-            self.scale_factor = 1.0
-
+        self.window = ctk.CTk()
         self.window.resizable(False, False)
-        self.window.title("OAR Tool v3.3")
-
-        self._set_scaled_geometry(300, 225)
+        self.window.title("OAR Tool 3.4")
+        self.window.geometry("300x250")
 
         self.main_frame = None
+        self.menu_frame = None
 
         self._setup_icon()
         self._create_menu_bar()
-
-    def _set_scaled_geometry(self, width: int, height: int):
-
-        scaled_w = int(width * self.scale_factor)
-        scaled_h = int(height * self.scale_factor)
-        self.window.geometry(f"{scaled_w }x{scaled_h }")
 
     def _setup_icon(self):
         try:
@@ -343,26 +351,53 @@ class OARTool:
             self.show_selection_screen()
 
     def _create_menu_bar(self):
-        menubar = tk.Menu(self.window)
-        self.window.config(menu=menubar)
-
-        mode_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Mode", menu=mode_menu)
-        mode_menu.add_command(label="Normal Mode", command=lambda: self.set_mode(False))
-        mode_menu.add_command(
-            label="Advanced Mode", command=lambda: self.set_mode(True)
+        self.menu_frame = ctk.CTkFrame(
+            self.window, fg_color=("#202020", "#202020"), height=24
         )
+        self.menu_frame.pack(fill="x", side="top")
+        self.menu_frame.pack_propagate(False)
 
-        help_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Help", menu=help_menu)
-        help_menu.add_command(label="About", command=self._show_about)
-        help_menu.add_command(label="Debug Console", command=self._show_debug_console)
+        mode_button = ctk.CTkButton(
+            self.menu_frame,
+            text="Mode",
+            command=lambda: self._show_mode_menu(mode_button),
+            width=60,
+            height=24,
+            fg_color=("#202020", "#202020"),
+            hover_color=("#383838", "#383838"),
+            corner_radius=0,
+        )
+        mode_button.pack(side="left")
+
+        help_button = ctk.CTkButton(
+            self.menu_frame,
+            text="Help",
+            command=lambda: self._show_help_menu(help_button),
+            width=60,
+            height=24,
+            fg_color=("#202020", "#202020"),
+            hover_color=("#383838", "#383838"),
+            corner_radius=0,
+        )
+        help_button.pack(side="left")
+
+    def _show_mode_menu(self, button):
+        options = [
+            ("Normal Mode", lambda: self.set_mode(False)),
+            ("Advanced Mode", lambda: self.set_mode(True)),
+        ]
+        CTkMenu(self.window, button, options)
+
+    def _show_help_menu(self, button):
+        options = [
+            ("About", self._show_about),
+            ("Debug Console", self._show_debug_console),
+        ]
+        CTkMenu(self.window, button, options)
 
     def _show_debug_console(self):
         if self.debug_console is None or not self.debug_console.winfo_exists():
-            self.debug_console = DebugConsole(
-                self.window, self.log_history, self.scale_factor
-            )
+            self.debug_console = DebugConsole(self.window, self.log_history)
             self.debug_console.protocol("WM_DELETE_WINDOW", self.debug_console.on_close)
         else:
             self.debug_console.lift()
@@ -384,138 +419,151 @@ class OARTool:
             self.show_advanced_screen()
 
     def _show_about(self):
-        messagebox.showinfo(
-            "About OAR Tool",
-            "OAR Tool v3.3\n\nMade By FireNinja\n\nhttps://github.com/FireNinja7365/OAR-Tool",
+        about_window = ctk.CTkToplevel(self.window)
+        about_window.title("About OAR Tool")
+        about_window.geometry("400x230")
+        about_window.resizable(False, False)
+
+        try:
+            icon_path = self.script_files_dir / "custom_icon.ico"
+            if icon_path.exists():
+                about_window.after(200, lambda: about_window.iconbitmap(str(icon_path)))
+        except Exception:
+            pass
+
+        content_frame = ctk.CTkFrame(about_window, fg_color="transparent")
+        content_frame.pack(fill="both", expand=True, padx=15, pady=15)
+
+        ctk.CTkLabel(content_frame, text="OAR Tool", font=("Arial", 24, "bold")).pack(
+            pady=(5, 2)
         )
+
+        ctk.CTkLabel(
+            content_frame, text="Version 3.4", font=("Arial", 12), text_color="gray"
+        ).pack(pady=(0, 15))
+
+        ctk.CTkLabel(
+            content_frame,
+            text="Made By FireNinja7365\nHarbour map added by BaselAshraf81",
+            font=("Arial", 14),
+        ).pack(pady=3)
+
+        github_label = ctk.CTkLabel(
+            content_frame,
+            text="https://github.com/FireNinja7365/OAR-Tool",
+            font=("Arial", 11),
+            text_color="#3b8ed0",
+            cursor="hand2",
+        )
+        github_label.pack(pady=8)
+
+        def open_github(event):
+            import webbrowser
+
+            webbrowser.open("https://github.com/FireNinja7365/OAR-Tool")
+
+        github_label.bind("<Button-1>", open_github)
+
+        ctk.CTkButton(
+            content_frame,
+            text="Close",
+            command=about_window.destroy,
+            width=120,
+            height=32,
+        ).pack(pady=(15, 0))
 
     def _clear_window(self):
         if self.main_frame:
             self.main_frame.destroy()
-        self.main_frame = ttk.Frame(self.window, padding="10")
-        self.main_frame.pack(fill=tk.BOTH, expand=True)
+        self.main_frame = ctk.CTkFrame(self.window, fg_color="transparent")
+        self.main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
     def show_selection_screen(self):
         self._clear_window()
-        self._set_scaled_geometry(300, 225)
+        self.window.geometry("300x250")
 
-        ttk.Label(
+        ctk.CTkLabel(
             self.main_frame,
             text="Select your Steam account:",
             font=("Arial", 12, "bold"),
         ).pack(pady=(0, 10))
 
-        self._create_scrollable_account_list()
+        scroll = ctk.CTkScrollableFrame(self.main_frame, fg_color="transparent")
+        scroll.pack(fill="both", expand=True)
 
-    def _create_scrollable_account_list(self):
-        container_frame = ttk.Frame(self.main_frame)
-        container_frame.pack(fill="both", expand=True)
+        self._load_accounts(scroll)
 
-        canvas = tk.Canvas(container_frame, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(
-            container_frame, orient="vertical", command=canvas.yview
-        )
-        scrollable_frame = ttk.Frame(canvas)
+    def _load_accounts(self, parent_frame):
+        if not self.steam_manager.steam_path:
+            ctk.CTkLabel(
+                parent_frame, text="Steam installation not found!", text_color="red"
+            ).pack()
+            return
 
-        def configure_scroll_region(event=None):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-            canvas_width = canvas.winfo_width()
-            frame_width = scrollable_frame.winfo_reqwidth()
+        try:
+            self.account_data = self.steam_manager.load_accounts()
 
-            if frame_width < canvas_width:
-                x_offset = (canvas_width - frame_width) // 2
-            else:
-                x_offset = 0
+            for account_name in sorted(self.account_data.keys()):
+                ctk.CTkButton(
+                    parent_frame,
+                    text=account_name,
+                    command=lambda name=account_name: self._select_account(name),
+                ).pack(pady=5, fill="x")
 
-            canvas.coords(canvas_window, x_offset, 0)
-
-        scrollable_frame.bind("<Configure>", configure_scroll_region)
-        canvas.bind("<Configure>", configure_scroll_region)
-
-        canvas_window = canvas.create_window(
-            (0, 0), window=scrollable_frame, anchor="n"
-        )
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        def _on_mousewheel(event):
-            if (
-                canvas.canvasy(0) > 0
-                or canvas.canvasy(canvas.winfo_height())
-                < scrollable_frame.winfo_reqheight()
-            ):
-                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-        def _bind_mousewheel(event):
-            canvas.bind_all("<MouseWheel>", _on_mousewheel)
-
-        def _unbind_mousewheel(event):
-            canvas.unbind_all("<MouseWheel>")
-
-        canvas.bind("<Enter>", _bind_mousewheel)
-        canvas.bind("<Leave>", _unbind_mousewheel)
-
-        self._load_accounts(scrollable_frame)
-
-        self.window.update_idletasks()
-        configure_scroll_region()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load Steam accounts: {e }")
+            logging.error(f"Failed to load accounts: {e }")
 
     def show_advanced_screen(self, prefill_save_dir: Optional[str] = None):
         self._clear_window()
-        self._set_scaled_geometry(500, 350)
+        self.window.geometry("500x375")
 
-        ttk.Label(
+        ctk.CTkLabel(
             self.main_frame, text="Advanced Mode", font=("Arial", 14, "bold")
         ).pack(pady=10)
 
         if prefill_save_dir:
-            ttk.Label(
+            ctk.CTkLabel(
                 self.main_frame,
                 text="Account not in login file. Please enter the Steam64 ID.",
-                foreground="blue",
+                text_color="#3b8ed0",
             ).pack(pady=(0, 10))
 
-        id_frame = ttk.Frame(self.main_frame)
-        id_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(id_frame, text="Steam64 ID:").pack(side=tk.LEFT, padx=5)
+        ctk.CTkLabel(self.main_frame, text="Steam64 ID:").pack(anchor="w", padx=20)
         self.steam_id_var = tk.StringVar()
-        ttk.Entry(id_frame, textvariable=self.steam_id_var, width=30).pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=5
+        ctk.CTkEntry(self.main_frame, textvariable=self.steam_id_var).pack(
+            fill="x", padx=20, pady=(0, 10)
         )
 
-        dir_frame = ttk.Frame(self.main_frame)
-        dir_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(dir_frame, text="Save Directory:").pack(side=tk.LEFT, padx=5)
-        self.save_dir_var = tk.StringVar()
-        if prefill_save_dir:
-            self.save_dir_var.set(prefill_save_dir)
-        ttk.Entry(dir_frame, textvariable=self.save_dir_var, width=30).pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=5
+        ctk.CTkLabel(self.main_frame, text="Save Directory:").pack(anchor="w", padx=20)
+        df = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        df.pack(fill="x", padx=20)
+        self.save_dir_var = tk.StringVar(value=prefill_save_dir or "")
+        ctk.CTkEntry(df, textvariable=self.save_dir_var).pack(
+            side="left", fill="x", expand=True
         )
-        ttk.Button(
-            dir_frame, text="Browse...", command=self._browse_save_directory
-        ).pack(side=tk.RIGHT, padx=5)
+        ctk.CTkButton(
+            df, text="Browse...", width=80, command=self._browse_save_directory
+        ).pack(side="right", padx=(5, 0))
 
-        ttk.Label(
+        ctk.CTkLabel(
             self.main_frame,
             text="In advanced mode, you can manually specify your Steam64 ID\nand the location of your save files.",
             justify=tk.CENTER,
         ).pack(pady=10)
 
-        ttk.Label(
+        ctk.CTkLabel(
             self.main_frame,
             text="Warning: Only use if you know what you're doing!",
-            foreground="red",
+            text_color="red",
             font=("Arial", 10, "bold"),
         ).pack(pady=10)
 
-        ttk.Button(
+        ctk.CTkButton(
             self.main_frame,
             text="Continue to Edit",
             command=self._process_advanced_selection,
-        ).pack(fill=tk.X, expand=True, padx=5, pady=10)
+        ).pack(fill="x", padx=20)
 
     def _browse_save_directory(self):
         directory = filedialog.askdirectory(
@@ -546,7 +594,7 @@ class OARTool:
 
     def show_edit_screen(self, steam64_id: str):
         self._clear_window()
-        self._set_scaled_geometry(300, 225)
+        self.window.geometry("300x250")
 
         form_vars = {
             "cash": tk.IntVar(),
@@ -557,68 +605,53 @@ class OARTool:
             "edit_maps": tk.BooleanVar(),
         }
 
-        ttk.Label(self.main_frame, text="Made By FireNinja").pack()
+        ctk.CTkLabel(
+            self.main_frame, text="Made By FireNinja7365", font=("Arial", 10)
+        ).pack()
 
-        ttk.Checkbutton(
+        ctk.CTkCheckBox(
             self.main_frame,
             text="Unlock Items & Cosmetics",
             variable=form_vars["edit_items"],
-        ).pack(anchor="w")
+        ).pack(anchor="w", padx=10, pady=2)
 
-        ttk.Checkbutton(
+        ctk.CTkCheckBox(
             self.main_frame, text="Unlock Maps", variable=form_vars["edit_maps"]
-        ).pack(anchor="w")
+        ).pack(anchor="w", padx=10, pady=2)
 
-        ttk.Checkbutton(
-            self.main_frame, text="Edit Cash:", variable=form_vars["edit_cash"]
-        ).pack(anchor="w")
-        ttk.Entry(self.main_frame, textvariable=form_vars["cash"]).pack(fill="x")
-
-        ttk.Checkbutton(
-            self.main_frame, text="Edit Level:", variable=form_vars["edit_level"]
-        ).pack(anchor="w")
-        ttk.Entry(self.main_frame, textvariable=form_vars["level"]).pack(fill="x")
-
-        ttk.Label(self.main_frame, text="").pack()
-
-        buttons_frame = ttk.Frame(self.main_frame)
-        buttons_frame.pack(fill="x", expand=True)
-
-        ttk.Button(buttons_frame, text="Back", command=self._go_back).pack(
-            side="left", fill="x", expand=True, padx=2
+        f_cash = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        f_cash.pack(fill="x", padx=10, pady=2)
+        ctk.CTkCheckBox(
+            f_cash, text="Edit Cash:", variable=form_vars["edit_cash"]
+        ).pack(side="left")
+        ctk.CTkEntry(f_cash, textvariable=form_vars["cash"], width=100).pack(
+            side="right"
         )
 
-        ttk.Button(
-            buttons_frame,
-            text="Apply",
-            command=lambda: self._apply_changes(form_vars, steam64_id),
+        f_lvl = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        f_lvl.pack(fill="x", padx=10, pady=2)
+        ctk.CTkCheckBox(
+            f_lvl, text="Edit Level:", variable=form_vars["edit_level"]
+        ).pack(side="left")
+        ctk.CTkEntry(f_lvl, textvariable=form_vars["level"], width=100).pack(
+            side="right"
+        )
+
+        btn_f = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        btn_f.pack(fill="x", side="bottom", pady=5)
+
+        ctk.CTkButton(
+            btn_f, text="Back", fg_color="#4a4a4a", command=self._go_back
         ).pack(side="left", fill="x", expand=True, padx=2)
 
+        ctk.CTkButton(
+            btn_f,
+            text="Apply",
+            command=lambda: self._apply_changes(form_vars, steam64_id),
+        ).pack(side="right", fill="x", expand=True, padx=2)
+
     def _go_back(self):
-
         self.show_selection_screen()
-
-    def _load_accounts(self, parent_frame):
-        if not self.steam_manager.steam_path:
-            ttk.Label(
-                parent_frame, text="Steam installation not found!", foreground="red"
-            ).pack()
-            return
-
-        try:
-            self.account_data = self.steam_manager.load_accounts()
-
-            for account_name in sorted(self.account_data.keys()):
-                ttk.Button(
-                    parent_frame,
-                    text=account_name,
-                    command=lambda name=account_name: self._select_account(name),
-                    width=40,
-                ).pack(pady=5)
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to load Steam accounts: {e }")
-            logging.error(f"Failed to load accounts: {e }")
 
     def _select_account(self, account_name: str):
         account_info = self.account_data.get(account_name)
@@ -627,7 +660,6 @@ class OARTool:
             return
 
         try:
-
             if account_info.steam64_id is None:
                 logging.warning(f"Unknown account selected: {account_name }")
                 logging.info("Redirecting to Advanced Mode with pre-filled path.")
@@ -730,11 +762,9 @@ def main():
         app = OARTool()
         app.run()
     except Exception as e:
-
         logging.critical(f"Application failed to start: {e }", exc_info=True)
         messagebox.showerror("Fatal Error", f"Application failed to start: {e }")
 
 
 if __name__ == "__main__":
     main()
-
