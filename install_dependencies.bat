@@ -1,1 +1,1 @@
-python -m pip install vdf nuitka
+python -m pip install vdf nuitka customtkinter
