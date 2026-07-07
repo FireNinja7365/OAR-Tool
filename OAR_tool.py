@@ -169,7 +169,11 @@ class SteamManager:
                             / "remote"
                         )
 
-                        accounts[account_name] = AccountInfo(
+                        display_name = account_name
+                        if display_name in accounts:
+                            display_name = f"{account_name} ({steam3_id})"
+
+                        accounts[display_name] = AccountInfo(
                             steam3_id=steam3_id,
                             steam64_id=steam_id64,
                             userdata_path=str(userdata_path),
@@ -568,7 +572,7 @@ class OARTool:
     def _browse_save_directory(self):
         directory = filedialog.askdirectory(
             title="Select Directory Containing Save Files",
-            initialdir=self.steam_manager.steam_path or "/",
+            initialdir=self.steam_manager.steam_path or os.path.expanduser("~"),
         )
         if directory:
             self.save_dir_var.set(directory)
@@ -590,6 +594,12 @@ class OARTool:
             steam64_id, save_dir
         )
 
+        if self.steam_manager.steam_path:
+            steam3_id = str(int(steam64_id) & 0xFFFFFFFF)
+            backup_root = Path(__file__).parent / "OAR backup"
+            backup_root.mkdir(exist_ok=True)
+            self.steam_manager.create_backup(steam3_id, backup_root)
+
         self.show_edit_screen(steam64_id)
 
     def show_edit_screen(self, steam64_id: str):
@@ -597,8 +607,8 @@ class OARTool:
         self.window.geometry("300x250")
 
         form_vars = {
-            "cash": tk.IntVar(),
-            "level": tk.IntVar(),
+            "cash": tk.StringVar(value="0"),
+            "level": tk.StringVar(value="0"),
             "edit_cash": tk.BooleanVar(),
             "edit_level": tk.BooleanVar(),
             "edit_items": tk.BooleanVar(),
@@ -651,7 +661,10 @@ class OARTool:
         ).pack(side="right", fill="x", expand=True, padx=2)
 
     def _go_back(self):
-        self.show_selection_screen()
+        if self.is_advanced_mode or not self.steam_manager.steam_path:
+            self.show_advanced_screen()
+        else:
+            self.show_selection_screen()
 
     def _select_account(self, account_name: str):
         account_info = self.account_data.get(account_name)
@@ -664,7 +677,7 @@ class OARTool:
                 logging.warning(f"Unknown account selected: {account_name }")
                 logging.info("Redirecting to Advanced Mode with pre-filled path.")
                 self.steam_manager.ensure_game_directories(account_info.steam3_id)
-                self.set_mode(True)
+                self.is_advanced_mode = True
                 self.show_advanced_screen(prefill_save_dir=account_info.userdata_path)
                 return
 
@@ -690,14 +703,26 @@ class OARTool:
             messagebox.showerror("Error", f"Failed to select account: {e }")
             logging.error(f"Account selection failed: {e }")
 
-    def _validate_number_input(self, value: int) -> bool:
-        if not (-2147483648 <= value <= 2147483647):
+    def _parse_number_input(self, raw_value: str, field_name: str) -> Optional[int]:
+        value = raw_value.strip()
+        if not value:
+            messagebox.showerror("Error", f"{field_name} must be a valid number.")
+            return None
+
+        try:
+            parsed = int(value)
+        except ValueError:
+            messagebox.showerror("Error", f"{field_name} must be a valid number.")
+            return None
+
+        if not (-2147483648 <= parsed <= 2147483647):
             messagebox.showinfo(
                 "Information",
                 "Invalid Value! Must be between -2,147,483,648 and 2,147,483,647",
             )
-            return False
-        return True
+            return None
+
+        return parsed
 
     def _apply_changes(self, form_vars: Dict[str, tk.Variable], steam64_id: str):
         if not self.remote_directory:
@@ -720,8 +745,11 @@ class OARTool:
                     new_key = None
 
                     if value_var:
-                        value = form_vars[value_var].get()
-                        if not self._validate_number_input(value):
+                        field_name = "Cash" if value_var == "cash" else "Level"
+                        value = self._parse_number_input(
+                            form_vars[value_var].get(), field_name
+                        )
+                        if value is None:
                             return
                         new_key = value.to_bytes(4, byteorder="little", signed=True)
                         logging.info(f"Editing {file_type .lower ()} to: {value }")
