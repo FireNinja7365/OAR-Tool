@@ -12,9 +12,98 @@ from typing import Dict, Optional, List
 import logging
 from dataclasses import dataclass
 
+from pygvas.gvas_file import GVASFile
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
+
+
+class SaveFileManager:
+    SAVE_TYPES = ["Cash", "Level", "InventoryItems", "Maps"]
+
+    MIRRORED_VALUE_PROPERTIES = {
+        "Cash": ("CashSave", "SecureCashSave"),
+        "Level": ("LevelSave", "SecureLevelSave"),
+    }
+
+    STEAM_ID_MAP_KEY = "SecureSteamID"
+
+    def __init__(self, script_files_dir: Path):
+        self.script_files_dir = script_files_dir
+
+    def generate_save_filenames(
+        self, steam64_id: str, remote_dir: str
+    ) -> Dict[str, str]:
+        return {
+            f"{save_type }Save": os.path.join(
+                remote_dir,
+                hashlib.md5(f"{steam64_id }{save_type }".encode()).hexdigest() + ".sav",
+            )
+            for save_type in self.SAVE_TYPES
+        }
+
+    def _load_template(self, file_type: str) -> GVASFile:
+        script_path = self.script_files_dir / f"{file_type }.sav"
+        if not script_path.exists():
+            raise FileNotFoundError(f"Script file not found: {script_path }")
+        return GVASFile.deserialize_gvas_file(str(script_path))
+
+    def _patch_steam_id(self, gvas: GVASFile, steam64_id: str) -> None:
+        steam_map = gvas.properties.get(self.STEAM_ID_MAP_KEY)
+        if steam_map is None:
+            logging.warning(
+                f"{self .STEAM_ID_MAP_KEY } not found in template; skipping."
+            )
+            return
+        for key_property, _value_property in steam_map.values:
+            key_property.value = steam64_id
+
+    def _patch_mirrored_int(
+        self, gvas: GVASFile, main_key: str, mirror_key: str, new_value: int
+    ) -> None:
+        main_property = gvas.properties.get(main_key)
+        if main_property is not None:
+            main_property.value = new_value
+        else:
+            logging.warning(f"{main_key } not found in template; skipping.")
+
+        mirror_property = gvas.properties.get(mirror_key)
+        if mirror_property is not None:
+            for key_property, _value_property in mirror_property.values:
+                key_property.value = new_value
+        else:
+            logging.warning(f"{mirror_key } not found in template; skipping.")
+
+    def apply_save_modification(
+        self,
+        file_type: str,
+        steam64_id: str,
+        remote_dir: str,
+        duplicate_file: Optional[str] = None,
+        new_value: Optional[int] = None,
+    ) -> None:
+        gvas = self._load_template(file_type)
+
+        self._patch_steam_id(gvas, steam64_id)
+
+        if file_type in self.MIRRORED_VALUE_PROPERTIES and new_value is not None:
+            main_key, mirror_key = self.MIRRORED_VALUE_PROPERTIES[file_type]
+            self._patch_mirrored_int(gvas, main_key, mirror_key, new_value)
+
+        files_to_write = [Path(remote_dir) / f"{steam64_id }{file_type }.sav"]
+        if duplicate_file and Path(duplicate_file).parent.exists():
+            files_to_write.append(Path(duplicate_file))
+
+        for file_path in files_to_write:
+            self._write_save_file(gvas, file_path)
+
+    def _write_save_file(self, gvas: GVASFile, file_path: Path) -> None:
+        try:
+            gvas.serialize_to_gvas_file(str(file_path))
+            logging.info(f"Save file written: {file_path }")
+        except Exception as e:
+            logging.error(f"Failed to write save file {file_path }: {e }")
+            raise
 
 
 @dataclass
@@ -222,60 +311,6 @@ class SteamManager:
                 logging.info(f"Backup created: {backup_folder }")
             except Exception as e:
                 logging.error(f"Failed to create backup: {e }")
-
-
-class SaveFileManager:
-    SAVE_TYPES = ["Cash", "Level", "InventoryItems", "Maps"]
-
-    def __init__(self, script_files_dir: Path):
-        self.script_files_dir = script_files_dir
-
-    def generate_save_filenames(
-        self, steam64_id: str, remote_dir: str
-    ) -> Dict[str, str]:
-        return {
-            f"{save_type }Save": os.path.join(
-                remote_dir,
-                hashlib.md5(f"{steam64_id }{save_type }".encode()).hexdigest() + ".sav",
-            )
-            for save_type in self.SAVE_TYPES
-        }
-
-    def apply_save_modification(
-        self,
-        file_type: str,
-        steam64_id: str,
-        remote_dir: str,
-        duplicate_file: Optional[str] = None,
-        old_key: Optional[bytes] = None,
-        new_key: Optional[bytes] = None,
-    ):
-        script_path = self.script_files_dir / f"{file_type }.sav"
-        if not script_path.exists():
-            raise FileNotFoundError(f"Script file not found: {script_path }")
-
-        with open(script_path, "rb") as file:
-            contents = file.read()
-
-        contents = contents.replace(b"my_stupid_user_id", steam64_id.encode())
-        if old_key is not None and new_key is not None:
-            contents = contents.replace(old_key, new_key)
-
-        files_to_write = [Path(remote_dir) / f"{steam64_id }{file_type }.sav"]
-        if duplicate_file and Path(duplicate_file).parent.exists():
-            files_to_write.append(Path(duplicate_file))
-
-        for file_path in files_to_write:
-            self._write_save_file(file_path, contents)
-
-    def _write_save_file(self, file_path: Path, contents: bytes):
-        try:
-            with open(file_path, "wb") as file:
-                file.write(contents)
-            logging.info(f"Save file written: {file_path }")
-        except Exception as e:
-            logging.error(f"Failed to write save file {file_path }: {e }")
-            raise
 
 
 class OARTool:
@@ -597,8 +632,8 @@ class OARTool:
         self.window.geometry("300x250")
 
         form_vars = {
-            "cash": tk.IntVar(),
-            "level": tk.IntVar(),
+            "cash": tk.StringVar(value="0"),
+            "level": tk.StringVar(value="0"),
             "edit_cash": tk.BooleanVar(),
             "edit_level": tk.BooleanVar(),
             "edit_items": tk.BooleanVar(),
@@ -624,18 +659,18 @@ class OARTool:
         ctk.CTkCheckBox(
             f_cash, text="Edit Cash:", variable=form_vars["edit_cash"]
         ).pack(side="left")
-        ctk.CTkEntry(f_cash, textvariable=form_vars["cash"], width=100).pack(
-            side="right"
-        )
+        cash_entry = ctk.CTkEntry(f_cash, textvariable=form_vars["cash"], width=100)
+        cash_entry.pack(side="right")
+        self._setup_number_entry(cash_entry, form_vars["cash"])
 
         f_lvl = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         f_lvl.pack(fill="x", padx=10, pady=2)
         ctk.CTkCheckBox(
             f_lvl, text="Edit Level:", variable=form_vars["edit_level"]
         ).pack(side="left")
-        ctk.CTkEntry(f_lvl, textvariable=form_vars["level"], width=100).pack(
-            side="right"
-        )
+        level_entry = ctk.CTkEntry(f_lvl, textvariable=form_vars["level"], width=100)
+        level_entry.pack(side="right")
+        self._setup_number_entry(level_entry, form_vars["level"])
 
         btn_f = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         btn_f.pack(fill="x", side="bottom", pady=5)
@@ -690,14 +725,54 @@ class OARTool:
             messagebox.showerror("Error", f"Failed to select account: {e }")
             logging.error(f"Account selection failed: {e }")
 
-    def _validate_number_input(self, value: int) -> bool:
-        if not (-2147483648 <= value <= 2147483647):
-            messagebox.showinfo(
-                "Information",
-                "Invalid Value! Must be between -2,147,483,648 and 2,147,483,647",
-            )
-            return False
-        return True
+    def _setup_number_entry(
+        self,
+        entry: ctk.CTkEntry,
+        var: tk.StringVar,
+        min_val: int = -2147483648,
+        max_val: int = 2147483647,
+    ) -> None:
+
+        def validate_keystroke(proposed: str) -> bool:
+
+            if proposed in ("", "-"):
+                return True
+            if proposed.startswith("-"):
+                proposed = proposed[1:]
+            return proposed.isdigit()
+
+        vcmd = (entry.register(validate_keystroke), "%P")
+        entry.configure(validate="key", validatecommand=vcmd)
+
+        def sanitize(*_args):
+            raw = var.get()
+            if raw in ("", "-"):
+
+                return
+
+            negative = raw.startswith("-")
+            digits = "".join(c for c in (raw[1:] if negative else raw) if c.isdigit())
+            stripped = digits.lstrip("0")
+
+            if not stripped:
+
+                cleaned = "0" if digits else ("-" if negative else "")
+            else:
+                value = int(stripped)
+                if negative:
+                    value = -value
+                value = max(min_val, min(max_val, value))
+                cleaned = str(value)
+
+            if cleaned != raw:
+                var.set(cleaned)
+
+        def reset_if_empty(_event):
+            if var.get() in ("", "-"):
+                var.set("0")
+
+        var.trace_add("write", sanitize)
+        entry.bind("<FocusOut>", reset_if_empty)
 
     def _apply_changes(self, form_vars: Dict[str, tk.Variable], steam64_id: str):
         if not self.remote_directory:
@@ -709,22 +784,19 @@ class OARTool:
 
         try:
             modifications = [
-                ("edit_cash", "cash", "Cash", b"my_stupid_cash_id"),
-                ("edit_level", "level", "Level", b"my_stupid_level_id"),
-                ("edit_items", None, "InventoryItems", None),
-                ("edit_maps", None, "Maps", None),
+                ("edit_cash", "cash", "Cash"),
+                ("edit_level", "level", "Level"),
+                ("edit_items", None, "InventoryItems"),
+                ("edit_maps", None, "Maps"),
             ]
 
-            for edit_var, value_var, file_type, old_key in modifications:
+            for edit_var, value_var, file_type in modifications:
                 if form_vars[edit_var].get():
-                    new_key = None
-
+                    new_value = None
                     if value_var:
-                        value = form_vars[value_var].get()
-                        if not self._validate_number_input(value):
-                            return
-                        new_key = value.to_bytes(4, byteorder="little", signed=True)
-                        logging.info(f"Editing {file_type .lower ()} to: {value }")
+                        raw_value = form_vars[value_var].get().strip()
+                        new_value = int(raw_value) if raw_value not in ("", "-") else 0
+                        logging.info(f"Editing {file_type .lower ()} to: {new_value }")
                     else:
                         logging.info(f"Unlocking {file_type .lower ()}")
 
@@ -733,8 +805,7 @@ class OARTool:
                         steam64_id,
                         self.remote_directory,
                         self.duplicate_files.get(f"{file_type }Save"),
-                        old_key,
-                        new_key,
+                        new_value,
                     )
                     changes_made = True
 
